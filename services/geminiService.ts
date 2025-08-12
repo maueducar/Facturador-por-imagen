@@ -105,7 +105,8 @@ export const processInvoiceTranscript = async (
   } catch (error) {
     console.error("Error al procesar con Gemini API:", error);
     if (error instanceof Error) {
-        if (error.message.includes("API key")) { // Check for API key related errors
+        // Make the check case-insensitive to catch variants like "API Key", "API key", etc.
+        if (error.message.toLowerCase().includes("api key")) {
              throw new Error("Error de configuración: No se pudo conectar con el servicio de IA. Verifique la configuración del servicio.");
         }
         throw new Error(`Error en la API de Gemini: ${error.message}`);
