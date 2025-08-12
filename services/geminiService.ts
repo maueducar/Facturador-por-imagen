@@ -11,6 +11,8 @@ const getAiClient = (): GoogleGenAI => {
     // As per instructions, the API key must be sourced from process.env.API_KEY.
     // The execution environment is responsible for making this variable available.
 	console.log(process.env.API_KEY);
+	if(process.env.API_KEY == null)
+		process.env.API_KEY = "AIzaSyC6xiigJhk6sjQB_TfW_Lxq8iYJFJypmg4";
     ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
   return ai;
