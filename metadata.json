@@ -1,0 +1,7 @@
+{
+  "name": "Copy of FacturaScan AI",
+  "description": "Una aplicación para escanear facturas de compra usando la cámara, extraer la información con IA y generar un JSON.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

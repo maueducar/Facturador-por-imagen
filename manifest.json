@@ -1,0 +1,17 @@
+{
+  "short_name": "FacturaScan",
+  "name": "FacturaScan AI",
+  "description": "Una aplicación para escanear facturas de compra usando la cámara, extraer la información con IA y generar un JSON.",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192 512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#111827",
+  "background_color": "#111827"
+}
