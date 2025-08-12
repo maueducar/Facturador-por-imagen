@@ -10,6 +10,7 @@ const getAiClient = (): GoogleGenAI => {
   if (!ai) {
     // As per instructions, the API key must be sourced from process.env.API_KEY.
     // The execution environment is responsible for making this variable available.
+	console.log(process.env.API_KEY);
     ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
   return ai;
@@ -107,7 +108,7 @@ export const processInvoiceTranscript = async (
     if (error instanceof Error) {
         // Make the check case-insensitive to catch variants like "API Key", "API key", etc.
         if (error.message.toLowerCase().includes("api key")) {
-             throw new Error("Error de configuración: No se pudo conectar con el servicio de IA. Verifique la configuración del servicio.");
+             throw new Error("Error de configuración: La conexión con el servicio de IA falló. (Nota para desarrolladores: Verifique que la variable de entorno API_KEY esté configurada correctamente).");
         }
         throw new Error(`Error en la API de Gemini: ${error.message}`);
     }
