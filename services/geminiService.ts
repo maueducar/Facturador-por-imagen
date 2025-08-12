@@ -13,7 +13,7 @@ const getAiClient = (): GoogleGenAI => {
 	console.log(process.env.API_KEY);
 	if(process.env.API_KEY == null)
 		process.env.API_KEY = "AIzaSyC6xiigJhk6sjQB_TfW_Lxq8iYJFJypmg4";
-    ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    ai = new GoogleGenAI({ apiKey: "AIzaSyC6xiigJhk6sjQB_TfW_Lxq8iYJFJypmg4" });
   }
   return ai;
 };
