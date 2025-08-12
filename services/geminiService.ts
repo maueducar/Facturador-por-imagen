@@ -1,7 +1,20 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { Invoice, GeminiResponse } from '../types';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+let ai: GoogleGenAI | null = null;
+
+// Lazily initialize the GoogleGenAI client on first use.
+// This prevents the application from crashing on startup if the API_KEY environment
+// variable is not yet available.
+const getAiClient = (): GoogleGenAI => {
+  if (!ai) {
+    // As per instructions, the API key must be sourced from process.env.API_KEY.
+    // The execution environment is responsible for making this variable available.
+    ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  }
+  return ai;
+};
+
 
 const INVOICE_SCHEMA = {
   type: Type.OBJECT,
@@ -68,9 +81,10 @@ export const processInvoiceTranscript = async (
   currentQuestion?: string
 ): Promise<GeminiResponse> => {
   try {
+    const aiClient = getAiClient();
     const prompt = createPrompt(transcript, currentInvoice, currentQuestion);
 
-    const response = await ai.models.generateContent({
+    const response: GenerateContentResponse = await aiClient.models.generateContent({
       model: "gemini-2.5-flash",
       contents: prompt,
       config: {
@@ -81,12 +95,19 @@ export const processInvoiceTranscript = async (
     });
     
     const jsonText = response.text.trim();
+    if (!jsonText) {
+        console.warn("Gemini API returned an empty response.");
+        return {}; // Return empty object if response is empty, to avoid JSON parsing errors
+    }
     const parsedJson = JSON.parse(jsonText) as GeminiResponse;
     return parsedJson;
 
   } catch (error) {
     console.error("Error al procesar con Gemini API:", error);
     if (error instanceof Error) {
+        if (error.message.includes("API key")) { // Check for API key related errors
+             throw new Error("Error de configuración: No se pudo conectar con el servicio de IA. Verifique la configuración del servicio.");
+        }
         throw new Error(`Error en la API de Gemini: ${error.message}`);
     }
     throw new Error("Se produjo un error desconocido al contactar con la IA.");
