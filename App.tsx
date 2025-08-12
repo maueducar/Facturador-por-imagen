@@ -1,263 +1,228 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { AppState, Invoice, GeminiResponse, SpeechRecognition, SpeechRecognitionEvent, SpeechRecognitionErrorEvent } from './types';
+import { INITIAL_INVOICE_STATE, GUIDED_QUESTIONS } from './constants';
+import { processInvoiceTranscript } from './services/geminiService';
+import MicrophoneButton from './components/MicrophoneButton';
+import InvoiceDisplay from './components/InvoiceDisplay';
+import StatusIndicator from './components/StatusIndicator';
+import { CheckIcon, FileJsonIcon } from './components/icons';
 
-import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { AppState, ReceiptData } from './types';
-import { extractReceiptData } from './services/geminiService';
-import { CameraIcon, ZapIcon, RotateCwIcon, SendIcon, CopyIcon, AlertTriangleIcon } from './components/icons';
+// Polyfill for SpeechRecognition
+const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition: SpeechRecognition | null = SpeechRecognitionAPI ? new SpeechRecognitionAPI() : null;
 
-const CameraView: React.FC<{
-  onCapture: (imageData: string) => void;
-  onCancel: () => void;
-  onError: (message: string) => void;
-}> = ({ onCapture, onCancel, onError }) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    let stream: MediaStream | null = null;
-    const enableCamera = async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' },
-        });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-      } catch (err) {
-        console.error("Error al acceder a la cámara:", err);
-        onError(
-          "No se pudo acceder a la cámara. Asegúrate de haber concedido los permisos."
-        );
-      }
-    };
-
-    enableCamera();
-
-    return () => {
-      stream?.getTracks().forEach((track) => track.stop());
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onError]);
-
-  const handleCapture = () => {
-    if (videoRef.current && canvasRef.current) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const context = canvas.getContext('2d');
-      if (context) {
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imageData = canvas.toDataURL('image/jpeg', 0.9);
-        onCapture(imageData);
-      }
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black flex flex-col items-center justify-center">
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        className="w-full h-full object-cover"
-      />
-      <canvas ref={canvasRef} className="hidden" />
-      <div className="absolute inset-0 border-8 border-white/50 rounded-3xl m-4 pointer-events-none"></div>
-      <div className="absolute bottom-0 left-0 right-0 bg-black/50 p-4 flex justify-around items-center">
-        <button onClick={onCancel} className="text-white font-semibold py-2 px-4">
-          Cancelar
-        </button>
-        <button
-          onClick={handleCapture}
-          className="w-20 h-20 bg-white rounded-full border-4 border-gray-500 flex items-center justify-center"
-          aria-label="Capturar foto"
-        >
-          <div className="w-16 h-16 bg-white rounded-full border-2 border-black"></div>
-        </button>
-        <div className="w-16"></div>
-      </div>
-    </div>
-  );
-};
+if (recognition) {
+  recognition.continuous = true;
+  recognition.lang = 'es-ES';
+  recognition.interimResults = true;
+}
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
-  const [imageData, setImageData] = useState<string | null>(null);
-  const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
+  const [invoice, setInvoice] = useState<Invoice>(INITIAL_INVOICE_STATE);
+  const [transcript, setTranscript] = useState<string>('');
+  const [isListening, setIsListening] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [apiStatus, setApiStatus] = useState<'idle' | 'sending' | 'sent'>('idle');
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(0);
+  
+  const finalTranscriptRef = useRef<string>('');
 
-  const handleStartScan = () => {
+  const resetState = useCallback(() => {
+    setInvoice(INITIAL_INVOICE_STATE);
+    setTranscript('');
+    finalTranscriptRef.current = '';
+    setCurrentQuestionIndex(0);
     setError(null);
-    setAppState(AppState.CAMERA_REQUEST);
-  };
-  
-  useEffect(() => {
-    if(appState === AppState.CAMERA_REQUEST) {
-        setAppState(AppState.SCANNING);
-    }
-  }, [appState]);
-
-  const handleCapture = (data: string) => {
-    setImageData(data);
-    setAppState(AppState.PREVIEW);
-  };
-  
-  const handleCancelScan = () => {
     setAppState(AppState.IDLE);
-    setImageData(null);
+  }, []);
+
+  const handleApiError = (errorMessage: string) => {
+    setError(errorMessage);
+    setAppState(AppState.ERROR);
   };
 
-  const handleRetry = () => {
-    setAppState(AppState.SCANNING);
-    setImageData(null);
-  };
+  const processTranscript = useCallback(async (text: string) => {
+    if (!text.trim()) {
+      setAppState(currentQuestionIndex === 0 ? AppState.IDLE : AppState.GUIDED);
+      return;
+    }
 
-  const handleExtractData = useCallback(async () => {
-    if (!imageData) return;
-    setAppState(AppState.ANALYZING);
+    setAppState(AppState.PROCESSING);
     setError(null);
+
     try {
-      const data = await extractReceiptData(imageData);
-      setReceiptData(data);
-      setAppState(AppState.RESULT);
-    } catch (err) {
-      console.error(err);
-      setError((err as Error).message || 'Un error desconocido ocurrió.');
-      setAppState(AppState.ERROR);
-    }
-  }, [imageData]);
-  
-  const handleReset = () => {
-      setAppState(AppState.IDLE);
-      setImageData(null);
-      setReceiptData(null);
-      setError(null);
-      setApiStatus('idle');
-  };
+      const currentQuestion = GUIDED_QUESTIONS[currentQuestionIndex];
+      const result: GeminiResponse = await processInvoiceTranscript(text, invoice, currentQuestion);
 
-  const handleSendToApi = () => {
-    setApiStatus('sending');
-    setTimeout(() => {
-        // Simulación de llamada a API
-        console.log("Enviando JSON a la API:", JSON.stringify(receiptData, null, 2));
-        setApiStatus('sent');
-    }, 1500);
-  };
-  
-  const handleCopyJson = () => {
-      if(receiptData) {
-          navigator.clipboard.writeText(JSON.stringify(receiptData, null, 2));
-          alert("JSON copiado al portapapeles!");
+      const updatedInvoice: Invoice = { ...invoice };
+      if (result.client) {
+        updatedInvoice.client = { ...invoice.client, ...result.client };
       }
-  };
-  
-  const renderContent = () => {
-    switch (appState) {
-      case AppState.SCANNING:
-        return <CameraView onCapture={handleCapture} onCancel={handleCancelScan} onError={(msg) => {setError(msg); setAppState(AppState.ERROR);}} />;
+      if (result.items && result.items.length > 0) {
+        // Simple merge for now, could be more sophisticated (e.g., merging items)
+        updatedInvoice.items = [...invoice.items, ...result.items];
+      }
+      if (result.concepts) {
+        updatedInvoice.concepts = result.concepts;
+      }
       
-      case AppState.PREVIEW:
-        return (
-          imageData && (
-            <div className="flex flex-col h-full p-4 space-y-4">
-              <h2 className="text-2xl font-bold text-white text-center">Revisar Foto</h2>
-              <div className="flex-grow flex items-center justify-center">
-                  <img src={imageData} alt="Factura capturada" className="max-w-full max-h-[60vh] rounded-lg shadow-lg" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <button onClick={handleRetry} className="flex items-center justify-center gap-2 bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-4 rounded-lg transition-colors">
-                  <RotateCwIcon className="w-5 h-5" />
-                  Reintentar
-                </button>
-                <button onClick={handleExtractData} className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors">
-                  <ZapIcon className="w-5 h-5" />
-                  Extraer Datos
-                </button>
-              </div>
-            </div>
-          )
-        );
-        
-      case AppState.ANALYZING:
-        return (
-            <div className="flex flex-col items-center justify-center h-full text-white">
-                <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-400"></div>
-                <p className="mt-4 text-xl">Analizando factura...</p>
-                <p className="text-gray-400">La IA está leyendo los datos.</p>
-            </div>
-        );
-        
-       case AppState.RESULT:
-         return (
-             receiptData && (
-                 <div className="flex flex-col h-full p-4 space-y-4 text-white">
-                     <h2 className="text-2xl font-bold text-center">Datos Extraídos</h2>
-                     <div className="flex-grow bg-gray-800 p-3 rounded-lg overflow-y-auto text-sm">
-                         <pre><code>{JSON.stringify(receiptData, null, 2)}</code></pre>
-                     </div>
-                     <div className="space-y-3">
-                         <div className="grid grid-cols-2 gap-3">
-                             <button onClick={handleCopyJson} className="flex items-center justify-center gap-2 bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-4 rounded-lg transition-colors">
-                                 <CopyIcon className="w-5 h-5"/>
-                                 Copiar
-                             </button>
-                              <button onClick={handleSendToApi} disabled={apiStatus !== 'idle'} className={`flex items-center justify-center gap-2 font-bold py-3 px-4 rounded-lg transition-colors ${
-                                  apiStatus === 'idle' ? 'bg-green-600 hover:bg-green-700' :
-                                  apiStatus === 'sending' ? 'bg-yellow-500 cursor-wait' : 'bg-green-800'
-                              } text-white`}>
-                                 <SendIcon className="w-5 h-5"/>
-                                 {apiStatus === 'idle' && 'Enviar a API'}
-                                 {apiStatus === 'sending' && 'Enviando...'}
-                                 {apiStatus === 'sent' && 'Enviado'}
-                             </button>
-                         </div>
-                         <button onClick={handleReset} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors">
-                             Escanear Otra
-                         </button>
-                     </div>
-                 </div>
-             )
-         );
+      setInvoice(updatedInvoice);
 
-      case AppState.ERROR:
-        return (
-            <div className="flex flex-col items-center justify-center h-full text-white text-center p-6">
-                <AlertTriangleIcon className="w-16 h-16 text-red-500 mb-4"/>
-                <h2 className="text-2xl font-bold text-red-400 mb-2">Ocurrió un Error</h2>
-                <p className="bg-red-900/50 p-3 rounded-md text-red-300">{error}</p>
-                <button onClick={handleReset} className="mt-6 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-colors">
-                    Volver a Intentar
-                </button>
-            </div>
-        );
+      const allDataPresent = updatedInvoice.client.name && updatedInvoice.client.id && updatedInvoice.items.length > 0;
 
-      case AppState.IDLE:
-      case AppState.CAMERA_REQUEST:
-      default:
-        return (
-          <div className="flex flex-col items-center justify-center h-full text-white text-center p-6">
-            <h1 className="text-4xl font-bold mb-2">FacturaScan AI</h1>
-            <p className="text-gray-300 mb-8">
-              Toma una foto de tu factura para extraer los datos automáticamente.
-            </p>
-            <button
-              onClick={handleStartScan}
-              className="flex items-center gap-3 bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-full text-lg transition-transform hover:scale-105"
-            >
-              <CameraIcon className="w-7 h-7" />
-              Escanear Factura
-            </button>
-          </div>
-        );
+      if (result.isComplete || allDataPresent || currentQuestionIndex >= GUIDED_QUESTIONS.length - 2) {
+         setAppState(AppState.REVIEW);
+      } else {
+         setCurrentQuestionIndex(prev => prev + 1);
+         setAppState(AppState.GUIDED);
+      }
+
+    } catch (e) {
+        if (e instanceof Error) {
+            handleApiError(e.message);
+        } else {
+            handleApiError("Ocurrió un error desconocido.");
+        }
+    } finally {
+        setTranscript('');
+        finalTranscriptRef.current = '';
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoice, currentQuestionIndex]);
+
+  useEffect(() => {
+    if (!recognition) {
+        handleApiError("El reconocimiento de voz no es compatible con este navegador.");
+        setAppState(AppState.ERROR);
+        return;
+    }
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let interimTranscript = '';
+      finalTranscriptRef.current = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscriptRef.current += event.results[i][0].transcript + ' ';
+        } else {
+          interimTranscript += event.results[i][0].transcript;
+        }
+      }
+      setTranscript(finalTranscriptRef.current + interimTranscript);
+    };
+
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      handleApiError(`Error de reconocimiento de voz: ${event.error}`);
+      setIsListening(false);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      // Only process if we were actually listening and have a final transcript
+      if (finalTranscriptRef.current.trim()) {
+          processTranscript(finalTranscriptRef.current);
+      } else if (appState === AppState.LISTENING) {
+          // If listening stopped without any final result, go back to previous state
+          setAppState(currentQuestionIndex === 0 ? AppState.IDLE : AppState.GUIDED);
+      }
+    };
+  }, [appState, processTranscript, currentQuestionIndex]);
+
+  const handleListen = () => {
+    if (!recognition) return;
+    
+    if (isListening) {
+      recognition.stop();
+    } else {
+      finalTranscriptRef.current = '';
+      setTranscript('');
+      setIsListening(true);
+      setAppState(AppState.LISTENING);
+      recognition.start();
     }
   };
+
+  const handleConfirmInvoice = () => {
+      setAppState(AppState.FINALIZED);
+      // Here you would typically send the JSON to an API
+      console.log("JSON de la factura final:", JSON.stringify(invoice, null, 2));
+  };
+
+  const renderButtons = () => {
+    switch (appState) {
+        case AppState.REVIEW:
+            return (
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-8">
+                    <button
+                        onClick={handleConfirmInvoice}
+                        className="flex items-center justify-center gap-2 w-full sm:w-auto px-6 py-3 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 transition-colors duration-300"
+                    >
+                        <CheckIcon className="w-5 h-5" />
+                        Confirmar y Finalizar
+                    </button>
+                    <MicrophoneButton onClick={handleListen} isListening={isListening} />
+                     <p className="text-gray-400 text-sm sm:hidden mt-2">Presiona el micrófono para corregir.</p>
+                </div>
+            );
+        case AppState.FINALIZED:
+            return (
+                <button
+                    onClick={resetState}
+                    className="mt-8 px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-300"
+                >
+                    Crear Nueva Factura
+                </button>
+            );
+        case AppState.ERROR:
+            return (
+                 <button
+                    onClick={resetState}
+                    className="mt-8 px-6 py-3 bg-yellow-600 text-gray-900 font-semibold rounded-lg shadow-md hover:bg-yellow-700 transition-colors duration-300"
+                >
+                    Intentar de Nuevo
+                </button>
+            )
+        case AppState.IDLE:
+        case AppState.GUIDED:
+        case AppState.LISTENING:
+        case AppState.PROCESSING:
+             return <MicrophoneButton onClick={handleListen} isListening={isListening} disabled={appState === AppState.PROCESSING} />;
+    }
+  }
 
   return (
-    <div className="h-screen w-screen bg-gray-900 font-sans flex flex-col">
-      <div className="flex-grow overflow-hidden relative">
-          {renderContent()}
-      </div>
+    <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-4 selection:bg-blue-500/30">
+        <div className="absolute top-0 left-0 w-full h-full bg-grid-gray-700/[0.2] [mask-image:linear-gradient(to_bottom,white_5%,transparent_90%)]"></div>
+        <main className="w-full max-w-5xl z-10 flex flex-col items-center">
+            <h1 className="text-4xl md:text-5xl font-bold text-center bg-clip-text text-transparent bg-gradient-to-b from-white to-gray-400 mb-4">
+                Factura por Voz AI
+            </h1>
+            
+            <StatusIndicator appState={appState} question={GUIDED_QUESTIONS[currentQuestionIndex]} error={error}/>
+
+            {transcript && (
+                <div className="w-full max-w-2xl p-4 my-4 bg-gray-800/50 border border-gray-700 rounded-lg">
+                    <p className="text-gray-300 italic">{transcript}</p>
+                </div>
+            )}
+            
+            {(appState !== AppState.IDLE && appState !== AppState.LISTENING && appState !== AppState.PROCESSING) && <div className="my-8 w-full"><InvoiceDisplay invoice={invoice} /></div>}
+
+            {appState === AppState.FINALIZED && (
+                 <div className="w-full max-w-4xl p-6 my-8 bg-gray-800 border border-gray-700 rounded-xl">
+                    <h3 className="text-lg font-semibold text-gray-200 flex items-center gap-2"><FileJsonIcon className="w-6 h-6 text-green-400" />JSON para API</h3>
+                    <pre className="mt-4 bg-gray-900/70 p-4 rounded-lg text-sm text-green-300 overflow-x-auto">
+                        {JSON.stringify(invoice, null, 2)}
+                    </pre>
+                 </div>
+            )}
+
+            <div className="mt-8 flex flex-col items-center">
+                {renderButtons()}
+            </div>
+      </main>
+      <footer className="z-10 text-center text-gray-500 text-sm mt-12">
+        <p>Potenciado por Google Gemini. Diseñado para una carga de datos eficiente.</p>
+      </footer>
     </div>
   );
 };

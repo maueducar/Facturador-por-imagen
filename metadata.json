@@ -1,7 +1,7 @@
 {
-  "name": "Copy of FacturaScan AI",
-  "description": "Una aplicación para escanear facturas de compra usando la cámara, extraer la información con IA y generar un JSON.",
+  "name": "Factura por Voz AI",
+  "description": "Una aplicación web que permite a los usuarios crear facturas dictando la información mediante la voz. Utiliza la API de Gemini para procesar el lenguaje natural y estructurar los datos de la factura. El proceso es guiado para asegurar que toda la información necesaria sea capturada.",
   "requestFramePermissions": [
-    "camera"
+    "microphone"
   ]
 }

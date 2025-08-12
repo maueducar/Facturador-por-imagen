@@ -1,5 +1,5 @@
 {
-  "name": "copy-of-facturascan-ai",
+  "name": "factura-por-voz-ai",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,8 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "react": "^19.1.1",
     "@google/genai": "^1.13.0"
   },
   "devDependencies": {
